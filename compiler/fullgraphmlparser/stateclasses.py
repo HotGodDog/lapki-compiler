@@ -157,6 +157,14 @@ class GeneratorInitialVertex(BaseParserVertex):
     transition: UnconditionalTransition
 
 
+class GeneratorSumFunction(BaseParserVertex):
+    """Представление функционального блока SumArray."""
+    def __init__(self, id: str, parent: str | None, input_array: str, output_var: str):
+        super().__init__(id=id, parent=parent)
+        self.input_array = input_array
+        self.output_var = output_var
+
+
 @dataclass
 class GeneratorChoiceVertex(BaseParserVertex):
     """Класс, обозначающий псевдосостояние выбора."""
@@ -269,6 +277,7 @@ class StateMachine:
     shallow_history: List[GeneratorShallowHistory] = Field(
         default_factory=list
     )
+    sum_functions: List[GeneratorSumFunction] = Field(default_factory=list)
     compiling_settings: Optional[SMCompilingSettings] = None
 
 

@@ -29,7 +29,8 @@ from cyberiadaml_py.types.elements import (
     CGMLInitialState,
     CGMLChoice,
     CGMLFinal,
-    CGMLShallowHistory
+    CGMLShallowHistory,
+    CGMLSumFunction
 )
 from compiler.fullgraphmlparser.stateclasses import (
     StateMachine,
@@ -45,6 +46,7 @@ from compiler.fullgraphmlparser.stateclasses import (
     UnconditionalTransition,
     GeneratorFinalVertex,
     GeneratorShallowHistory,
+    GeneratorSumFunction,
     GLOBAL_STATE
 )
 _StartNodeId = str
@@ -761,6 +763,34 @@ def __create_final_states(
     return finals
 
 
+def __create_sum_functions(
+    sum_nodes: Dict[str, CGMLSumFunction],  # предположим, что это класс из cyberiadaml-py
+    transitions: List[ParserTrigger]
+) -> tuple[List[GeneratorSumFunction], List[ParserTrigger]]:
+    """
+    Извлекает блоки SumArray из схемы и возвращает их,
+    а также оставшиеся переходы (если они ведут из этих блоков).
+    """
+    sum_funcs: List[GeneratorSumFunction] = []
+    remaining_transitions: List[ParserTrigger] = []
+    
+    for trans in transitions:
+        if trans.source in sum_nodes:
+            # Находим узел по id
+            node = sum_nodes[trans.source]
+            # Создаём объект с параметрами 
+            sum_func = GeneratorSumFunction(
+                id=trans.source,
+                parent=node.parent,
+                input_array=node.input_array,  # допустим, поле в CGMLSumFunction
+                output_var=node.output_var
+            )
+            sum_funcs.append(sum_func)
+        else:
+            remaining_transitions.append(trans)
+    return sum_funcs, remaining_transitions
+
+
 def __update_global_state(
     global_state: ParserState,
     states: Dict[str, ParserState]
@@ -900,6 +930,10 @@ async def parse(xml: str) -> tuple[Dict[StateMachineId, ERROR],
                     state_machine.shallow_history, transitions_without_choices
                 )
             )
+            sum_functions, transitions_without_sums = __create_sum_functions(
+                state_machine.sum_functions,  # предположим, что это поле есть в CGMLElements
+                transitions_without_shallow_history
+            )
             final_states = __create_final_states(state_machine.finals)
             all_triggers = __get_all_triggers(
                 list(states.values()),
@@ -949,7 +983,8 @@ async def parse(xml: str) -> tuple[Dict[StateMachineId, ERROR],
                 final_states=final_states,
                 language=platform.language,
                 header_file_extension=platform.header_file_extension,
-                shallow_history=shallow_history
+                shallow_history=shallow_history,
+                sum_functions=sum_functions
             )
         except _InnerCGMLException as e:
             errors[sm_id] = (

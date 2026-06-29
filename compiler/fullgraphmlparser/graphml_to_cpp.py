@@ -93,6 +93,7 @@ class CppFileWriter:
         self.global_state = state_machine.global_state
         self.shallow_history = self.__convert_local_history_to_dict(
             state_machine.shallow_history)
+        self.sum_functions = state_machine.sum_functions
         self.initial_states = state_machine.initial_states
         self.choices = state_machine.choices
         self.final_states = state_machine.final_states
@@ -317,6 +318,20 @@ class CppFileWriter:
                 f'status_ = Q_TRAN(shallowHistory[{shallow_history.index}]);\n',
                 shallow_history,
                 'Shallow history')
+            
+    async def _write_sum_functions_definitions(self):
+        """Генерирует код для всех блоков SumArray."""
+        for func in self.sum_functions:
+            code_h = f"int {func.id}(const int* arr, size_t size);"
+            code_cpp = f"""
+            int {func.id}(const int* arr, size_t size) {{
+                int sum = 0;
+                for (size_t i = 0; i < size; ++i) sum += arr[i];
+                return sum;
+            }}"""
+            # Сохраняем в notes_dict для автоматической вставки
+            self.notes_dict['user_methods_h'] += code_h + "\n"
+            self.notes_dict['user_methods_c'] += code_cpp + "\n"
 
     async def _write_final_states_definition(self):
         for final in self.final_states:
@@ -349,6 +364,7 @@ class CppFileWriter:
             await self._write_choice_vertex_definition()
             await self._write_final_states_definition()
             await self._write_local_history_definition()
+            await self._write_sum_functions_definitions()
             setup_notes = self.notes[Labels.SETUP.value]
             if setup_notes or self.create_setup:
                 await self._insert_string('\nvoid setup() {')
