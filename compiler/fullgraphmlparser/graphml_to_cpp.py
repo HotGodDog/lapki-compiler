@@ -646,35 +646,52 @@ class CppFileWriter:
         Генерирует объявление и определение C++ функции для одного ComputationFunction.
         Автоматически определяет внешние параметры на основе входов блоков.
         """
-        # Топологическая сортировка
-        dependencies = {block.id: [] for block in func.blocks}
-        in_degree = {block.id: 0 for block in func.blocks}
+        # Топологическая сортировка блоков функции для правильного порядка вызова
+
+        dependencies = {block.id: [] for block in func.blocks}  # список зависимостей
+        in_degree = {block.id: 0 for block in func.blocks}      # количество зависимостей
+        
+        # Проходим по всем связям и считаем количество зависимостей для каждого блока
         for conn in func.connections:
             if conn.target_block_id in dependencies:
                 dependencies[conn.target_block_id].append(conn.source_block_id)
                 in_degree[conn.target_block_id] += 1
 
-        from collections import deque
+        from collections import deque   # TODO: вынести в начало файла
+
+        # Создаем очередь и помещаем в нее все блоки у которых степень входа = 0
         queue = deque([bid for bid, deg in in_degree.items() if deg == 0])
+        
+        # Пока очередь не пустая, добавляем каждый блок в итоговый список
         sorted_blocks = []
         while queue:
             bid = queue.popleft()
             sorted_blocks.append(bid)
+
+            # Для каждого блока который зависит от блока добавленного в итоговую очередь
+            # уменьшаем количество зависимостей на 1, и если оно стало равно 0, добавляем его в очередь
             for dep in dependencies.get(bid, []):
                 in_degree[dep] -= 1
                 if in_degree[dep] == 0:
                     queue.append(dep)
 
+        # Проверка на циклические зависимости
         if len(sorted_blocks) != len(func.blocks):
             raise CodeGenerationException(f'Циклическая зависимость в функции {func.name}')
 
-        # Определение внешних параметров
-        block_ids = {b.id for b in func.blocks}
+        # Множество идентификаторов всех блоков
+        block_ids = {b.id for b in func.blocks} 
+        
+        # Проходим по всем блокам и их входам, чтобы найти все внешние параметры
+        # (которые не являются числами и не ссылаются на другие блоки)
         external_params = set()
         for block in func.blocks:
             for port, value in block.inputs.items():
+                # Проверка на число, не явл. внешним параметром, пропускаем
                 if isinstance(value, (int, float)):
                     continue
+                # Если строка проверяем не число и не индефикатор блока
+                # то это внешний параметр, добавляем в множество
                 if isinstance(value, str):
                     if value.isdigit() or (value.startswith('-') and value[1:].isdigit()):
                         continue
@@ -695,10 +712,12 @@ class CppFileWriter:
                 param_list.append(('int32_t', p))
 
         params_str = ', '.join([f'{typ} {name}' for typ, name in param_list])
-        available = {name: name for _, name in param_list}
+        # Связывает имя параметра с самим собой для использования в блоках
+        # Словарь будет расширяться на этапе генерации тела
+        available = {name: name for _, name in param_list}  
 
         # Генерация тела
-        temp_vars = {}
+        temp_vars = {}  # Словарь для временных переменных
         body_lines = []
 
         # Определяем, какой блок является выходным (его результат возвращается)
@@ -715,6 +734,7 @@ class CppFileWriter:
             block = next(b for b in func.blocks if b.id == bid)
 
             # Обработка блока abs (модифицирует массив на месте)
+            # поэтому не создается временная переменная и не сохраняется результат
             if block.type == 'abs':
                 data_param = None
                 size_param = None
@@ -734,13 +754,13 @@ class CppFileWriter:
             args = []
             for port, value in block.inputs.items():
                 if value in available:
-                    args.append(available[value])
+                    args.append(available[value])   # Внешний параметр
                 elif value in temp_vars:
-                    args.append(temp_vars[value])
+                    args.append(temp_vars[value])   # Результат предыдущего блока
                 else:
-                    args.append(value)
+                    args.append(value)              # Константа или неизвестный параметр
 
-            # Генерация вызова в зависимости от типа
+            # Генерация вызова функции в зависимости от типа блока
             if block.type == 'sum':
                 if len(args) >= 2:
                     array_arg, size_arg = args[0], args[1]
