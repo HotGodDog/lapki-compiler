@@ -846,29 +846,37 @@ class CppFileWriter:
 
 
     async def _write_computation_functions(self):
+        # Если в схеме нет вычислительных функций — выходим
         if not self.computation_functions:
             return
 
         # Генерация отдельных функций
-        declarations = []
-        definitions = []
+        declarations = []   # строки для .h
+        definitions = []    # строки для .cpp
+
+        # Для каждой вычислительной функции из модели:
+        # _generate_function_code возвращает пару (объявление, определение)
         for func in self.computation_functions:
             decl, defin = self._generate_function_code(func)
             declarations.append(decl)
             definitions.append(defin)
 
-        # Генерация класса Func
+        # Генерация класса-обертки Func
+        # _generate_func_class генерирует объявление и определение класса Func,
+        # который содержит метод call, вызывающий все сгенерированные функции.
         class_decl, class_def = self._generate_func_class()
         if class_decl:
             declarations.append(class_decl)
         if class_def:
             definitions.append(class_def)
 
+        # Добавление сгенерированных объявлений и определений в соответствующие заметки
         if declarations:
             self.notes[Labels.USER_FUNC_H.value].append(
                 '\n// Вычислительные функции\n' + '\n'.join(declarations)
             )
         if definitions:
+            # Определения добавляем в метку USER_FUNC_C (вставляются в .cpp)
             self.notes[Labels.USER_FUNC_C.value].append(
                 '\n// Определения вычислительных функций\n' + '\n'.join(definitions)
             )
@@ -879,9 +887,11 @@ class CppFileWriter:
         Метод call вызывает все сгенерированные функции, передавая им data и size,
         если они присутствуют в сигнатуре функции.
         """
+        # Если нет ни одной функции — возвращаем пустые строки
         if not self.computation_functions:
             return '', ''
 
+        # Объявление класса
         class_decl = """
         class Func {
         public:
@@ -903,6 +913,7 @@ class CppFileWriter:
                 value == 'size' for block in func.blocks for value in block.inputs.values()
             )
 
+            # Вызываем с правльными аргументами
             if uses_data and uses_size:
                 call_body.append(f'    (void){func.name}(data, size);')
             elif uses_data:
@@ -910,6 +921,7 @@ class CppFileWriter:
             else:
                 call_body.append(f'    (void){func.name}();')
 
+        # Сборка определения метода call, который вызывает все функции
         method_def = f"""
         void Func::call(int8_t* data, size_t size) {{
             // Сгенерированные вызовы всех вычислительных функций

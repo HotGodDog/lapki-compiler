@@ -809,9 +809,9 @@ def __parse_computation_functions(
     Преобразует список CGML-объектов вычислительных функций
     во внутреннее представление для кодогенератора.
     """
-    result: List[ComputationFunction] = []
+    result: List[ComputationFunction] = []  # Итоговый список функций
     for cgml_func in cgml_functions:
-        # Создаём словарь блоков по id для быстрого доступа
+        # Создание словаря блоков и преобразование блоков
         block_map = {}
         blocks = []
         for cgml_block in cgml_func.blocks:
@@ -827,8 +827,8 @@ def __parse_computation_functions(
             blocks.append(block)
             block_map[block.id] = block
 
+        # Обработка ребер и создание связей между блоками
         connections = []
-        # Обрабатываем рёбра
         for edge in cgml_func.edges:
             source_id = edge.source
             target_id = edge.target
@@ -856,6 +856,7 @@ def __parse_computation_functions(
                     block_map[source_id].outputs.append(port)
             # иначе игнорируем (связь между входом и выходом напрямую)
 
+        # Сборка ComputationFunction и добавление в результат
         func = ComputationFunction(
             id=cgml_func.id,
             name=cgml_func.name or cgml_func.id,
