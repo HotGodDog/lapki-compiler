@@ -69,6 +69,15 @@ class CppFileWriter:
     all_signals = []
     userFlag = False  # Флаг на наличие кода для класса User
 
+    # Словарь генраторов для вычислительных функций,
+    # где ключ - тип блока, а значение - имя функции
+    _generators = {
+        'sum': '_gen_sum',
+        'smooth': '_gen_smooth',
+        'greater': '_gen_greater',
+        'const': '_gen_const',
+    }
+
     def __init__(self,
                  state_machine: StateMachine,
                  create_setup=False,
@@ -641,6 +650,52 @@ class CppFileWriter:
 
         return actions
 
+    # Генрация кода для вычислительных функций
+    def _gen_sum(self, block, bid, args, body_lines):
+        """
+        Генерирует код для блока типа 'sum'.
+        Вызывает библиотечную функцию func_sum, передавая массив и размер.
+        Результат сохраняется во временную переменную temp_{bid}.
+        """
+        if len(args) >= 2:
+            array_arg, size_arg = args[0], args[1]
+        else:
+            array_arg, size_arg = 'data', 'size'
+        body_lines.append(f'    int32_t temp_{bid} = func_sum({array_arg}, {size_arg});')
+
+    def _gen_smooth(self, block, bid, args, body_lines):
+        """
+        Генерирует код для блока типа 'smooth'.
+        Создаёт статическую переменную prev_{bid} для хранения состояния между вызовами.
+        Вызывает func_smooth с текущим значением, коэффициентом и указателем на prev.
+        """
+        coeff = block.parameters.get('coeff', '0.4f')
+        if len(args) >= 1:
+            value_arg = args[0]
+        else:
+            value_arg = '0'
+        body_lines.append(f'    static int32_t prev_{bid} = 0;')
+        body_lines.append(f'    int32_t temp_{bid} = func_smooth({value_arg}, {coeff}, &prev_{bid});')
+
+    def _gen_greater(self, block, bid, args, body_lines):
+        """
+        Генерирует код для блока типа 'greater'.
+        Вызывает func_greater и преобразует результат (bool) в int32_t (1 или 0).
+        """
+        if len(args) >= 2:
+            a, b = args[0], args[1]
+        else:
+            a, b = '0', '0'
+        body_lines.append(f'    int32_t temp_{bid} = func_greater({a}, {b}) ? 1 : 0;')
+
+    def _gen_const(self, block, bid, args, body_lines):
+        """
+        Генерирует код для блока типа 'const' (константа).
+        Присваивает значение из параметра 'value' временной переменной temp_{bid}.
+        """
+        const_value = block.parameters.get('value', '0')
+        body_lines.append(f'    int32_t temp_{bid} = {const_value};')
+
     def _generate_function_code(self, func: ComputationFunction) -> tuple[str, str]:
         """
         Генерирует объявление и определение C++ функции для одного ComputationFunction.
@@ -760,37 +815,18 @@ class CppFileWriter:
                 else:
                     args.append(value)              # Константа или неизвестный параметр
 
-            # Генерация вызова функции в зависимости от типа блока
-            if block.type == 'sum':
-                if len(args) >= 2:
-                    array_arg, size_arg = args[0], args[1]
-                else:
-                    array_arg, size_arg = 'data', 'size'
-                body_lines.append(f'    int32_t temp_{bid} = func_sum({array_arg}, {size_arg});')
-            elif block.type == 'smooth':
-                coeff = block.parameters.get('coeff', '0.4f')
-                if len(args) >= 1:
-                    value_arg = args[0]
-                else:
-                    value_arg = '0'
-                # Для smooth нужен указатель на prev – создаём статическую переменную
-                static_var = f'static int32_t prev_{bid} = 0;'
-                body_lines.append(f'    {static_var}')
-                body_lines.append(f'    int32_t temp_{bid} = func_smooth({value_arg}, {coeff}, &prev_{bid});')
-            elif block.type == 'greater':
-                if len(args) >= 2:
-                    a, b = args[0], args[1]
-                else:
-                    a, b = '0', '0'
-                body_lines.append(f'    int32_t temp_{bid} = func_greater({a}, {b}) ? 1 : 0;')
-            elif block.type == 'const':
-                const_value = block.parameters.get('value', '0')
-                body_lines.append(f'    int32_t temp_{bid} = {const_value};')
+            # Генерация кода для блока с использованием словаря
+            generator_method_name = self._generators.get(block.type)
+            if generator_method_name:
+                # Динамически вызываем метод-генератор, соответствующий типу блока
+                getattr(self, generator_method_name)(block, bid, args, body_lines)
             else:
+                # Если тип блока неизвестен, добавляем комментарий-заглушку
                 body_lines.append(f'    // Неизвестный блок {block.type} (id={bid})')
 
+            # Делаем результат доступным для следующих блоков, чтобы последующие
+            # блоки могли использовать временную переменную как аргумент
             temp_vars[bid] = f'temp_{bid}'
-            # Добавляем имя блока в доступные переменные для последующих блоков
             available[bid] = f'temp_{bid}'
 
         # Формирование сигнатуры и тела
