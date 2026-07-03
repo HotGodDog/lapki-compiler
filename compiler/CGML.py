@@ -803,7 +803,7 @@ def check_sm_id(sm_id: str) -> bool:
     return regex is not None
 
 def __parse_computation_functions(
-    cgml_functions: List[Any]  # Здесь тип будет из cyberiadaml_py
+    cgml_functions: List[Any]  # список CGMLFunction из cyberiadaml-py
 ) -> List[ComputationFunction]:
     """
     Преобразует список CGML-объектов вычислительных функций
@@ -811,36 +811,60 @@ def __parse_computation_functions(
     """
     result: List[ComputationFunction] = []
     for cgml_func in cgml_functions:
+        # Создаём словарь блоков по id для быстрого доступа
+        block_map = {}
         blocks = []
         for cgml_block in cgml_func.blocks:
+            pos = (cgml_block.position.x, cgml_block.position.y) if cgml_block.position else (0, 0)
             block = FunctionBlock(
                 id=cgml_block.id,
-                type=cgml_block.type,
-                position=(cgml_block.x, cgml_block.y),
-                parameters=cgml_block.parameters,
-                inputs=cgml_block.inputs,
-                outputs=cgml_block.outputs,
+                type=cgml_block.type.lower(),
+                position=pos,
+                parameters=cgml_block.parameters or {},
+                inputs={},
+                outputs=[]
             )
             blocks.append(block)
+            block_map[block.id] = block
 
         connections = []
-        for cgml_conn in cgml_func.connections:
-            conn = FunctionConnection(
-                source_block_id=cgml_conn.source_block_id,
-                source_port=cgml_conn.source_port,
-                target_block_id=cgml_conn.target_block_id,
-                target_port=cgml_conn.target_port,
-            )
-            connections.append(conn)
+        # Обрабатываем рёбра
+        for edge in cgml_func.edges:
+            source_id = edge.source
+            target_id = edge.target
+            port = edge.label or ""
+
+            source_is_block = source_id in block_map
+            target_is_block = target_id in block_map
+
+            if source_is_block and target_is_block:
+                # Связь между блоками
+                connections.append(FunctionConnection(
+                    source_block_id=source_id,
+                    source_port=port,
+                    target_block_id=target_id,
+                    target_port=port
+                ))
+                # Добавляем в inputs целевого блока запись о том, что этот порт получает данные из источника
+                block_map[target_id].inputs[port] = source_id
+            elif not source_is_block and target_is_block:
+                # Источник — входной узел (внешний параметр)
+                block_map[target_id].inputs[port] = source_id
+            elif source_is_block and not target_is_block:
+                # Цель — выходной узел, добавляем имя порта в outputs блока
+                if port and port not in block_map[source_id].outputs:
+                    block_map[source_id].outputs.append(port)
+            # иначе игнорируем (связь между входом и выходом напрямую)
 
         func = ComputationFunction(
             id=cgml_func.id,
-            name=cgml_func.name,
+            name=cgml_func.name or cgml_func.id,
             blocks=blocks,
-            connections=connections,
+            connections=connections
         )
         result.append(func)
     return result
+
 
 async def parse(xml: str) -> tuple[Dict[StateMachineId, ERROR],
                                    Dict[StateMachineId, StateMachine]]:
@@ -855,6 +879,11 @@ async def parse(xml: str) -> tuple[Dict[StateMachineId, ERROR],
     """
     parser = CGMLParser()
     cgml_scheme: CGMLElements = parser.parse_cgml(xml)
+
+    # Извлекаем все вычислительные функции из схемы
+    all_cgml_functions = list(cgml_scheme.functions.values()) if hasattr(cgml_scheme, 'functions') else []
+    all_computation_functions = __parse_computation_functions(all_cgml_functions) if all_cgml_functions else []
+    
     platfrom_manager = PlatformManager()
     state_machines: Dict[str, StateMachine] = {}
     errors: Dict[STATE_MACHINE_ID, ERROR] = {}
@@ -943,11 +972,6 @@ async def parse(xml: str) -> tuple[Dict[StateMachineId, ERROR],
                 )
             )
             final_states = __create_final_states(state_machine.finals)
-            computation_functions = []
-            if hasattr(state_machine, 'computation_functions'):
-                computation_functions = __parse_computation_functions(
-                    state_machine.computation_functions
-                )
             all_triggers = __get_all_triggers(
                 list(states.values()),
                 transitions_without_shallow_history)
@@ -997,7 +1021,7 @@ async def parse(xml: str) -> tuple[Dict[StateMachineId, ERROR],
                 language=platform.language,
                 header_file_extension=platform.header_file_extension,
                 shallow_history=shallow_history,
-                computation_functions=computation_functions
+                computation_functions=all_computation_functions,
             )
         except _InnerCGMLException as e:
             errors[sm_id] = (
